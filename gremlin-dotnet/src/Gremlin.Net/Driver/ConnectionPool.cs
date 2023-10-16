@@ -56,7 +56,7 @@ namespace Gremlin.Net.Driver
             _connectionFactory = connectionFactory;
             _settings = settings;
             _logger = logger;
-            ReplaceDeadConnectionsAsync().WaitUnwrap();
+            ReplaceDeadConnectionsAsync().GetAwaiter().GetResult();
         }
         
         public int NrConnections => _connections.Count;
@@ -92,7 +92,7 @@ namespace Gremlin.Net.Driver
             if (poolState == PoolPopulationInProgress) return false;
             try
             {
-                await ReplaceDeadConnectionsAsync().ConfigureAwait(false);
+                await ReplaceDeadConnectionsAsync();
             }
             finally
             {
@@ -107,7 +107,7 @@ namespace Gremlin.Net.Driver
         {
             RemoveDeadConnections();
 
-            await FillPoolAsync().ConfigureAwait(false);
+            await FillPoolAsync();
         }
 
         private void RemoveDeadConnections()
@@ -129,31 +129,29 @@ namespace Gremlin.Net.Driver
         {
             var nrConnectionsToCreate = _settings.PoolSize - _connections.Count;
             _logger.FillingPool(nrConnectionsToCreate);
-            var connectionCreationTasks = new List<Task<IConnection>>(nrConnectionsToCreate);
+            var connectionCreationTasks = new List<IConnection>(nrConnectionsToCreate);
             try
             {
                 for (var i = 0; i < nrConnectionsToCreate; i++)
                 {
-                    connectionCreationTasks.Add(CreateNewConnectionAsync());
+                    connectionCreationTasks.Add(await CreateNewConnectionAsync());
                 }
 
-                var createdConnections = await Task.WhenAll(connectionCreationTasks).ConfigureAwait(false);
-                _connections.AddRange(createdConnections);
+                _connections.AddRange(connectionCreationTasks.ToArray());
             }
             catch (Exception)
             {
                 // Dispose all connections that were already created
                 foreach (var creationTask in connectionCreationTasks)
-                {
-                    if (creationTask.IsCompleted)
-                        creationTask.Result?.Dispose();
+                { 
+                    creationTask?.Dispose();
                 }
                 throw;
             }
             
             if (_disposed)
             {
-                await CloseAndRemoveAllConnectionsAsync().ConfigureAwait(false);
+                await CloseAndRemoveAllConnectionsAsync();
             }
         }
 
@@ -162,7 +160,7 @@ namespace Gremlin.Net.Driver
             var newConnection = _connectionFactory.CreateConnection();
             try
             {
-                await newConnection.ConnectAsync(_cts.Token).ConfigureAwait(false);
+                await newConnection.ConnectAsync(_cts.Token);
             }
             catch (Exception)
             {
@@ -238,10 +236,10 @@ namespace Gremlin.Net.Driver
 
         private async Task ReplaceClosedConnectionsAsync()
         {
-            var poolWasPopulated = await EnsurePoolIsHealthyAsync().ConfigureAwait(false);
+            var poolWasPopulated = await EnsurePoolIsHealthyAsync();
             // Another connection could have been removed already, check if another population is necessary
             if (poolWasPopulated && !_disposed)
-                await ReplaceClosedConnectionsAsync().ConfigureAwait(false);
+                await ReplaceClosedConnectionsAsync();
         }
 
         private IConnection ProxiedConnection(IConnection connection)
@@ -259,7 +257,7 @@ namespace Gremlin.Net.Driver
         {
             foreach (var connection in _connections.RemoveAndGetAll())
             {
-                await connection.CloseAsync().ConfigureAwait(false);
+                await connection.CloseAsync();
                 DefinitelyDestroyConnection(connection);
             }
         }
